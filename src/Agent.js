@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Camera, Info } from 'lucide-react';
+import * as tmImage from '@teachablemachine/image';
 
 const Agent = () => {
   const [isListening, setIsListening] = useState(false);
@@ -18,8 +19,9 @@ const Agent = () => {
   const videoRef = useRef(null);
   const inactivityTimeout = useRef(null);
   const OPENAI_KEY = process.env.REACT_APP_OPENAI_API_KEY;
+  const URL = 'https://teachablemachine.withgoogle.com/models/2SxVSXTTo/';
+  let model, webcam, labelContainer, maxPredictions;
 
-  // Initialize speech recognition and set up event handlers
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       recognition.current = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
@@ -72,6 +74,7 @@ const Agent = () => {
     if (isCapturing) {
       startVideoCapture();
       startListening();
+      speakIntroduction();
     } else {
       stopVideoCapture();
       stopListening();
@@ -156,10 +159,16 @@ const Agent = () => {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob(async (blob) => {
       const base64Image = await blobToBase64(blob);
-      const response = await fetchOpenAI(base64Image, userTranscript);
-      setCommentary(response.choices[0].message.content);
-      speakResponse(response.choices[0].message.content);
+      try {
+        const response = await fetchOpenAI(base64Image, userTranscript);
+        setCommentary(response.choices[0].message.content);
+        speakResponse(response.choices[0].message.content);
+      } catch (error) {
+        setError('Error processing the image with OpenAI');
+        console.error('OpenAI error:', error);
+      }
       setUserTranscript('');
+      uploadToTeachableMachine(blob);
     }, 'image/jpeg');
   };
 
@@ -184,16 +193,17 @@ const Agent = () => {
       body: JSON.stringify({
         model: "gpt-4o",
         messages: [
-          { role: "system", content: "You are a friendly helpful assistant." },
-          {
-            role: "user", content: [
-              { type: "text", text: `The user just spoken said: "${text}"; the image is of them now. Reply to them based on what you see and what they said` },
-              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
-            ]
-          }
+          { role: "system", content: "You are Dermai, an AI that detects skin conditions and determines how you can help. Ask the user to show their skin condition on camera and send the image to TensorFlow for classification. Provide the user with the classification result." },
+          { role: "user", content: `The user just spoken said: "${text}"; the image is of their skin condition. Reply to them based on what you see and what they said.` },
+          { role: "user", content: `data:image/jpeg;base64,${base64Image}` }
         ]
       })
     });
+
+    if (!response.ok) {
+      throw new Error('Network response was not ok');
+    }
+
     return response.json();
   };
 
@@ -213,43 +223,130 @@ const Agent = () => {
     setIsCapturing(!isCapturing);
   };
 
-  const circleSize = 64 + volume * 32; // Base size 64, max growth 32
+  const circleSize =30 + volume * 32; // Base size 64, max growth 32
+
+  const uploadToTeachableMachine = async (blob) => {
+    if (!model) {
+      try {
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+        console.log(`Attempting to load model from: ${modelURL}`);
+        console.log(`Attempting to load metadata from: ${metadataURL}`);
+        
+        // Fetch model JSON
+        const modelResponse = await fetch(modelURL);
+        const modelJson = await modelResponse.text();
+        console.log('Model JSON:', modelJson);
+
+        // Fetch metadata JSON
+        const metadataResponse = await fetch(metadataURL);
+        const metadataJson = await metadataResponse.text();
+        console.log('Metadata JSON:', metadataJson);
+
+        // Attempt to parse JSON content to ensure it's valid
+        JSON.parse(modelJson);
+        JSON.parse(metadataJson);
+
+        model = await tmImage.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+        console.log('Model and metadata loaded successfully');
+      } catch (error) {
+        console.error('Error loading Teachable Machine model:', error);
+        setError('Error loading Teachable Machine model');
+        return;
+      }
+    }
+
+    const image = new Image();
+    const objectURL = window.URL.createObjectURL(blob);
+    image.src = objectURL;
+    image.onload = async () => {
+      try {
+        const prediction = await model.predict(image);
+        let condition = "Unknown condition";
+        let highestProbability = 0;
+
+        for (let i = 0; i < maxPredictions; i++) {
+          if (prediction[i].probability > highestProbability) {
+            highestProbability = prediction[i].probability;
+            condition = prediction[i].className;
+          }
+        }
+
+        if (highestProbability * 100 >= 80) {
+          setCommentary(`It looks like you have ${condition} with a probability of ${(highestProbability * 100).toFixed(2)}%.`);
+          speakResponse(`It looks like you have ${condition} with a probability of ${(highestProbability * 100).toFixed(2)}%.`);
+        } else {
+          setCommentary("You have clear skin or there aren't any visible skin issues. Please change your view.");
+          speakResponse("You have clear skin or there aren't any visible skin issues. Please change your view.");
+        }
+
+        // Revoke the object URL to release memory
+        window.URL.revokeObjectURL(objectURL);
+      } catch (error) {
+        console.error('Error predicting image with Teachable Machine model:', error);
+        setError('Error predicting image with Teachable Machine model');
+        // Revoke the object URL in case of error
+        window.URL.revokeObjectURL(objectURL);
+      }
+    };
+  };
+
+  const speakIntroduction = () => {
+    const introduction = "Hello, I am Dermai. I can help detect skin conditions. Please turn on your camera and show me the area you are concerned about. I will capture an image and analyze it using a TensorFlow model to provide you with more information.";
+    const utterance = new SpeechSynthesisUtterance(introduction);
+    window.speechSynthesis.speak(utterance);
+  };
 
   return (
-    <div className="flex flex-col items-center justify-between h-screen bg-black text-white p-4">
-      <div className="self-end">
-        <Info size={24} />
-      </div>
-
-      <div className="flex-grow flex items-center justify-center">
-        <div
-          className="bg-white rounded-full flex items-center justify-center transition-all duration-100 ease-in-out"
-          style={{
-            width: `${circleSize}vmin`,
-            height: `${circleSize}vmin`,
-            opacity: 0.1 + volume * 0.9 // Adjust opacity based on volume
-          }}
-        />
-      </div>
-
-      <div className="w-full flex justify-center items-center">
-        <button
-          className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center"
-          onClick={handleButtonClick}
-          aria-label={isCapturing ? 'Stop Video and Audio Capture' : 'Start Video and Audio Capture'}
-        >
-          <Camera size={24} />
-        </button>
-      </div>
-
-      <video ref={videoRef} style={{ display: isCapturing ? 'block' : 'none', width: '200px', height: '150px', position: 'absolute', top: '10px', right: '10px' }} />
-
-      <div className="w-full mt-4">
-        <div className="bg-gray-800 rounded p-4 mb-4 text-blue-400">
-          {userTranscript}
+    <div className="flex h-screen bg-black text-white">
+      {/* Left side: Chat input/output and controls */}
+      <div className="w-1/2 flex flex-col p-4">
+        {/* Scrollable chat area */}
+        <div className="flex-grow overflow-y-auto mb-4">
+          <div className="bg-gray-800 rounded p-4 mb-4 text-blue-400">
+            {userTranscript}
+          </div>
+          <div className="bg-gray-800 rounded p-4 text-green-400">
+            {commentary}
+          </div>
         </div>
-        <div className="bg-gray-800 rounded p-4 text-green-400">
-          {commentary}
+
+        {/* Controls */}
+        <div className="flex items-center justify-between">
+          <button
+            className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center"
+            onClick={handleButtonClick}
+            aria-label={isCapturing ? 'Stop Video and Audio Capture' : 'Start Video and Audio Capture'}
+          >
+            <Camera size={24} />
+          </button>
+        </div>
+      </div>
+
+      {/* Right side: AI, webcam, and circle */}
+      <div className="w-1/2 flex flex-col relative">
+        {/* Webcam */}
+        <div className="h-1/2">
+          <video 
+            ref={videoRef} 
+            className={`w-full h-full object-cover ${isCapturing ? 'block' : 'hidden'}`}
+          />
+        </div>
+
+        {/* AI representation and circle */}
+        <div className="h-1/2 flex items-center justify-center relative">
+
+          
+          {/* Circle */}
+          <div
+            className="absolute inset-0 m-auto bg-white rounded-full transition-all duration-100 ease-in-out"
+            style={{
+              width: `${circleSize}px`,
+              height: `${circleSize}px`,
+              opacity: 0.1 + volume * 0.9
+            }}
+          />
         </div>
       </div>
     </div>
