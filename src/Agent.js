@@ -17,6 +17,7 @@ const Agent = () => {
   const recognition = useRef(null);
   const videoRef = useRef(null);
   const inactivityTimeout = useRef(null);
+  const OPENAI_KEY = process.env.REACT_APP_OPENAI_API_KEY;
 
   // Initialize speech recognition and set up event handlers
   useEffect(() => {
@@ -178,7 +179,7 @@ const Agent = () => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer sk-proj-Zvq7COD0QeyjL5P7ZpBvT3BlbkFJXov2eY2JLz9rtI0p0NtI`
+        'Authorization': `Bearer ${OPENAI_KEY}`
       },
       body: JSON.stringify({
         model: "gpt-4o",
