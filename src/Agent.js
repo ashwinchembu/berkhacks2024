@@ -307,21 +307,21 @@ const Agent = () => {
           <div className="bg-gray-800 rounded p-4 mb-4 text-blue-400">
             {userTranscript}
           </div>
-          <div className="bg-gray-800 rounded p-4 text-green-400">
+          <div className="bg-gray-800 rounded p-4 text-green-400 mt-80">
             {commentary}
           </div>
         </div>
 
         {/* Controls */}
-        <div className="flex items-center justify-between">
-          <button
-            className="w-12 h-12 bg-blue-500 rounded-full flex items-center justify-center"
-            onClick={handleButtonClick}
-            aria-label={isCapturing ? 'Stop Video and Audio Capture' : 'Start Video and Audio Capture'}
-          >
-            <Camera size={24} />
-          </button>
-        </div>
+       {/* Controls */}
+    <div className="flex items-center justify-center">
+      <button
+        className="px-6 py-3 bg-blue-500 text-white rounded-full flex items-center justify-center hover:bg-blue-600 transition-colors"
+        onClick={handleButtonClick}
+      >
+        {isCapturing ? 'Stop' : 'Start'}
+      </button>
+    </div>
       </div>
 
       {/* Right side: AI, webcam, and circle */}
